@@ -154,6 +154,87 @@ uint32_t Get_lineNumber(String & response)
     return l;
 }
 
+//function to send bytes to serial///////////////////////////////////////
+bool sendBytes2Serial(uint8_t* _buffer, int32_t _size)
+{
+    LOG("Send bytes: ")
+    LOG(String(_size))
+    LOG("\r\n")
+    String line2send;
+
+    //purge serial as nothing is supposed to interfere with upload
+    purge_serial();
+    //send line
+    ESPCOM::write(DEFAULT_PRINTER_PIPE, _buffer, _size);
+    ESPCOM::flush(DEFAULT_PRINTER_PIPE);
+    //check answer
+    if (wait_for_data(2000) > 0 ) {
+        bool done = false;
+        uint32_t timeout = millis();
+        uint8_t count = 0;
+        //got data check content
+        String response;
+        while (!done) {
+            size_t len = ESPCOM::available(DEFAULT_PRINTER_PIPE);
+            //get size of buffer
+            if (len > 0) {
+                uint8_t * sbuf = (uint8_t *)malloc(len+1);
+                if(!sbuf) {
+                    return false;
+                }
+                //read buffer
+                ESPCOM::readBytes(DEFAULT_PRINTER_PIPE, sbuf, len);
+                //convert buffer to zero end array
+                sbuf[len] = '\0';
+                //use string because easier to handle and allow to re-assemble cutted answer
+                response += (const char*) sbuf;
+                LOG("Response: ")
+                LOG(response)
+                LOG("\r\n")
+                
+                //it is resend ?
+                int pos = response.indexOf("rs");
+                //be sure we get full line to be able to process properly
+                if (( pos > -1) && (response.lastIndexOf("\n") > pos)) {
+                    LOG ("Resend detected\r\n")
+                    count++;
+                    if (count > 5) {
+                        free(sbuf);
+                        LOG ("Exit too many resend\r\n")
+                        return false;
+                    }
+                    purge_serial();
+                    LOG("Resend #")
+                    LOG(String(count))
+                    LOG("\r\n")
+                    response="";
+                    ESPCOM::write(DEFAULT_PRINTER_PIPE, _buffer, _size);
+                    ESPCOM::flush (DEFAULT_PRINTER_PIPE);
+                    wait_for_data(1000);
+                    timeout = millis();
+
+                } else {
+                    if ( (response.indexOf("ok") > -1) ) { //we have ok so it is done
+                        free(sbuf);
+                        LOG ("Got ok\r\n")
+                        purge_serial();
+                        return true;
+                    }
+                }
+                free(sbuf);
+            }
+            //no answer or over buffer  exit
+            if ( (millis() - timeout > 2000) ||  (response.length() >200)) {
+                LOG ("Time out\r\n")
+                done = true;
+            }
+            CONFIG::wait (5);
+        }
+    }
+    LOG ("Send buffer error\r\n")
+    return false;
+}
+
 //function to send line to serial///////////////////////////////////////
 //if newlinenb is NULL no auto correction of line number in case of resend
 bool sendLine2Serial (String &  line, int32_t linenb,  int32_t * newlinenb)

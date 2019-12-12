@@ -29,7 +29,8 @@ extern WiFiServer * data_server;
 class ESPCOM
 {
 public:
-    static size_t  write(tpipe output, uint8_t d);
+    static size_t write(tpipe output, uint8_t d);
+    static size_t write(tpipe output, uint8_t* buffer, uint32_t _size);
     static long readBytes (tpipe output, uint8_t * sbuf, size_t len);
     static long baudRate(tpipe output);
     static size_t available(tpipe output);

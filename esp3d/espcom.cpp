@@ -141,7 +141,37 @@ size_t ESPCOM::available(tpipe output)
         break;
     }
 }
-size_t   ESPCOM::write(tpipe output, uint8_t d)
+size_t ESPCOM::write(tpipe output, uint8_t* _buffer, size_t _size)
+{
+    if ((DEFAULT_PRINTER_PIPE == output) && (block_2_printer || CONFIG::is_locked(FLAG_BLOCK_SERIAL))) {
+        return 0;
+    }
+    if ((SERIAL_PIPE == output) && CONFIG::is_locked(FLAG_BLOCK_SERIAL)) {
+        return 0;
+    }
+    switch (output) {
+#ifdef USE_SERIAL_0
+    case SERIAL_PIPE:
+        return Serial.write(_buffer, _size);
+        break;
+#endif
+#ifdef USE_SERIAL_1
+    case SERIAL_PIPE:
+        return Serial1.write(_buffer, _size);
+        break;
+#endif
+#ifdef USE_SERIAL_2
+    case SERIAL_PIPE:
+        return Serial2.write(_buffer, _size);
+        break;
+#endif
+    default:
+        return 0;
+        break;
+    }
+}
+
+size_t ESPCOM::write(tpipe output, uint8_t d)
 {
     if ((DEFAULT_PRINTER_PIPE == output) && (block_2_printer || CONFIG::is_locked(FLAG_BLOCK_SERIAL))) {
         return 0;

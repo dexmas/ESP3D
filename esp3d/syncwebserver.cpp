@@ -155,6 +155,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 extern bool  deleteRecursive(String path);
 extern void CloseSerialUpload (bool iserror, String & filename, int32_t linenb);
+extern bool sendBytes2Serial(uint8_t* _buffer, int32_t _size);
 extern bool sendLine2Serial (String &  line, int32_t linenb, int32_t* newlinenb);
 extern bool purge_serial();
 
@@ -1239,7 +1240,7 @@ void handle_serial_SDFileList()
 #define MAX_RESEND_BUFFER 228
 #define SERIAL_CHECK_TIMEOUT 2000
 //SD file upload by serial
-void SDFile_serial_upload()
+void SDFile_serial_upload(bool _binary_mode)
 {
     static int32_t lineNb =-1;
     static String current_line;
@@ -1287,7 +1288,7 @@ void SDFile_serial_upload()
                         web_interface->_upload_status= UPLOAD_STATUS_FAILED;
                         pushError(ESP_ERROR_MOUNT_SD, "Mounting SD failed");
                     }
-                    if (web_interface->_upload_status != UPLOAD_STATUS_FAILED) {
+                    if (web_interface->_upload_status != UPLOAD_STATUS_FAILED && !_binary_mode) {
                         //Reset line numbering
                         if(!sendLine2Serial (resetcmd,-1, NULL)){
                             LOG("Reset Numbering failed")
@@ -1309,7 +1310,7 @@ void SDFile_serial_upload()
                         purge_serial();
                         //besure nothing left again
                         purge_serial();
-                        command = "M28 " + upload.filename;
+                        command = "M28 " + _binary_mode?"B1":"" + upload.filename;
                         //send start upload
                         //no correction allowed because it means reset numbering was failed
                         if (sendLine2Serial(command, lineNb, NULL)){
@@ -1329,51 +1330,61 @@ void SDFile_serial_upload()
                 //Upload write
                 //**************
                 //upload is on going with data coming by 2K blocks
-            } else if(upload.status == UPLOAD_FILE_WRITE) { //if com error no need to send more data to serial
-                for (int pos = 0;( pos < upload.currentSize) && (web_interface->_upload_status == UPLOAD_STATUS_ONGOING); pos++) { //parse full post data
-                    //feed watchdog
-                    CONFIG::wait(0);
-                    //it is a comment
-                    if (upload.buf[pos] == ';') {
-                        LOG ("Comment\r\n")
-                        is_comment = true;
+            } else if(upload.status == UPLOAD_FILE_WRITE && web_interface->_upload_status == UPLOAD_STATUS_ONGOING) { //if com error no need to send more data to serial
+                if (_binary_mode) {
+                    if (!sendBytes2Serial(upload.buf, upload.currentSize) ) {
+                        LOG ("Error sending bytes\n")
+                        CloseSerialUpload (true, current_filename,lineNb);
+                        web_interface->_upload_status= UPLOAD_STATUS_FAILED;
+                        pushError(ESP_ERROR_FILE_WRITE, "File write failed");
                     }
-                    //it is an end line
-                    else  if ( (upload.buf[pos] == 13) || (upload.buf[pos] == 10) ) {
-                        //if comment line then reset
-                        is_comment = false;
-                        //does line fit the buffer ?
-                        if (current_line.length() < MAX_RESEND_BUFFER) {
-                            //do we have something in buffer ?
-                            if (current_line.length() > 0 ) {
-                                lineNb++;
-                                if (!sendLine2Serial (current_line, lineNb, NULL) ) {
-                                    LOG ("Error sending line\n")
-                                    CloseSerialUpload (true, current_filename,lineNb);
-                                    web_interface->_upload_status= UPLOAD_STATUS_FAILED;
-                                    pushError(ESP_ERROR_FILE_WRITE, "File write failed");
-                                }
-                                //reset line
-                                current_line = "";
-
-                            } else {
-                                LOG ("Empy line\n")
-                            }
-                        } else {
-                            //error buffer overload
-                            LOG ("Error over buffer\n")
-                            lineNb++;
-                            web_interface->_upload_status= UPLOAD_STATUS_FAILED;
-                            pushError(ESP_ERROR_BUFFER_OVERFLOW, "Error buffer overflow");
+                } else {
+                    for (int pos = 0;( pos < upload.currentSize); pos++) 
+                    { //parse full post data
+                        //feed watchdog
+                        CONFIG::wait(0);
+                        //it is a comment
+                        if (upload.buf[pos] == ';') {
+                            LOG ("Comment\r\n")
+                            is_comment = true;
                         }
-                    } else if (!is_comment) {
-                        if (current_line.length() < MAX_RESEND_BUFFER) {
-                            current_line += char (upload.buf[pos]);  //copy current char to buffer to send/resend
-                        } else {
-                            LOG ("Error over buffer\n")
-                            lineNb++;
-                            web_interface->_upload_status= UPLOAD_STATUS_FAILED;
-                            pushError(ESP_ERROR_BUFFER_OVERFLOW, "Error buffer overflow");
+                        //it is an end line
+                        else  if ( (upload.buf[pos] == 13) || (upload.buf[pos] == 10) ) {
+                            //if comment line then reset
+                            is_comment = false;
+                            //does line fit the buffer ?
+                            if (current_line.length() < MAX_RESEND_BUFFER) {
+                                //do we have something in buffer ?
+                                if (current_line.length() > 0 ) {
+                                    lineNb++;
+                                    if (!sendLine2Serial (current_line, lineNb, NULL) ) {
+                                        LOG ("Error sending line\n")
+                                        CloseSerialUpload (true, current_filename,lineNb);
+                                        web_interface->_upload_status= UPLOAD_STATUS_FAILED;
+                                        pushError(ESP_ERROR_FILE_WRITE, "File write failed");
+                                    }
+                                    //reset line
+                                    current_line = "";
+
+                                } else {
+                                    LOG ("Empy line\n")
+                                }
+                            } else {
+                                //error buffer overload
+                                LOG ("Error over buffer\n")
+                                lineNb++;
+                                web_interface->_upload_status= UPLOAD_STATUS_FAILED;
+                                pushError(ESP_ERROR_BUFFER_OVERFLOW, "Error buffer overflow");
+                            }
+                        } else if (!is_comment) {
+                            if (current_line.length() < MAX_RESEND_BUFFER) {
+                                current_line += char (upload.buf[pos]);  //copy current char to buffer to send/resend
+                            } else {
+                                LOG ("Error over buffer\n")
+                                lineNb++;
+                                web_interface->_upload_status= UPLOAD_STATUS_FAILED;
+                                pushError(ESP_ERROR_BUFFER_OVERFLOW, "Error buffer overflow");
+                            }
                         }
                     }
                 }
@@ -1381,7 +1392,7 @@ void SDFile_serial_upload()
                 //**************
             } else if(upload.status == UPLOAD_FILE_END && web_interface->_upload_status == UPLOAD_STATUS_ONGOING) {
                 //if last part does not have '\n'
-                if (current_line.length()  > 0) {
+                if (current_line.length()  > 0 && !_binary_mode) {
                     lineNb++;
                     if (!sendLine2Serial (current_line, lineNb, NULL) ) {
                         LOG ("Error sending buffer\n")
